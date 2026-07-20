@@ -210,42 +210,51 @@ class CloseTicketView(discord.ui.View):
 # 5. DEVINETTES GEMINI IA & ANIMATION
 # ==========================================
 def generer_devinette_gemini():
+    """Retourne (question, reponse) ou (None, message_erreur) en cas d'échec."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        print("❌ Clé GEMINI_API_KEY non trouvée dans les variables d'environnement.")
-        return None, None
+        msg = "GEMINI_API_KEY manquante dans les variables d'environnement."
+        print(f"❌ {msg}")
+        return None, msg
 
-    try:
-        client = genai.Client(api_key=api_key)
-        prompt = (
-            "Génère une devinette originale, courte et amusante en français.\n"
-            "Format de réponse OBLIGATOIRE sur exactement 2 lignes :\n"
-            "Devinette: [Question]\n"
-            "Réponse: [Un seul mot précis en minuscules]"
-        )
+    # Modèles à essayer dans l'ordre
+    MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
 
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
+    prompt = (
+        "Génère une devinette originale, courte et amusante en français.\n"
+        "Format de réponse OBLIGATOIRE sur exactement 2 lignes :\n"
+        "Devinette: [Question]\n"
+        "Réponse: [Un seul mot précis en minuscules]"
+    )
 
-        lines = response.text.strip().split('\n')
-        question, reponse = "", ""
-        for line in lines:
-            if line.startswith("Devinette:"):
-                question = line.replace("Devinette:", "").strip()
-            elif line.startswith("Réponse:"):
-                reponse = line.replace("Réponse:", "").strip().lower()
+    last_error = "Aucun modèle n'a répondu."
+    for model_name in MODELS:
+        try:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
 
-        if not question or not reponse:
-            print("❌ Format de réponse Gemini invalide.")
-            return None, None
+            lines = response.text.strip().split('\n')
+            question, reponse = "", ""
+            for line in lines:
+                if line.startswith("Devinette:"):
+                    question = line.replace("Devinette:", "").strip()
+                elif line.startswith("Réponse:"):
+                    reponse = line.replace("Réponse:", "").strip().lower()
 
-        return question, reponse
+            if question and reponse:
+                return question, reponse
 
-    except Exception as e:
-        print(f"❌ Erreur lors de la génération Gemini: {e}")
-        return None, None
+            last_error = f"Format invalide reçu de {model_name} : {response.text[:100]!r}"
+            print(f"⚠️ {last_error}")
+
+        except Exception as e:
+            last_error = f"Erreur avec {model_name} : {e}"
+            print(f"❌ {last_error}")
+
+    return None, last_error
 
 
 # Génère une liste de tous les horaires :00 et :30 de la journée
@@ -269,11 +278,13 @@ async def envoyer_devinette():
     await asyncio.sleep(1.2)
     await msg.edit(content="🧩 Génération de la question...\n[██████▱▱▱▱]")
 
-    question, reponse = await asyncio.to_thread(generer_devinette_gemini)
+    question, reponse_ou_erreur = await asyncio.to_thread(generer_devinette_gemini)
 
-    if not question or not reponse:
-        await msg.edit(content="❌ Impossible de générer une devinette pour le moment.")
+    if not question:
+        await msg.edit(content=f"❌ Impossible de générer une devinette.\n> {reponse_ou_erreur}")
         return
+
+    reponse = reponse_ou_erreur
 
     CURRENT_DEVINETTE["reponse"] = reponse
     CURRENT_DEVINETTE["active"] = True
