@@ -217,8 +217,13 @@ def generer_devinette_gemini():
         print(f"❌ {msg}")
         return None, msg
 
-    # Modèles à essayer dans l'ordre
-    MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+    # Modèles stables à essayer dans l'ordre
+    MODELS = [
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+        "gemini-2.0-flash-exp",
+        "gemini-2.0-flash",
+    ]
 
     prompt = (
         "Génère une devinette originale, courte et amusante en français.\n"
@@ -227,7 +232,7 @@ def generer_devinette_gemini():
         "Réponse: [Un seul mot précis en minuscules]"
     )
 
-    last_error = "Aucun modèle n'a répondu."
+    errors = []
     for model_name in MODELS:
         try:
             client = genai.Client(api_key=api_key)
@@ -245,16 +250,19 @@ def generer_devinette_gemini():
                     reponse = line.replace("Réponse:", "").strip().lower()
 
             if question and reponse:
+                print(f"✅ Devinette générée avec {model_name}")
                 return question, reponse
 
-            last_error = f"Format invalide reçu de {model_name} : {response.text[:100]!r}"
-            print(f"⚠️ {last_error}")
+            err = f"{model_name}: format invalide → {response.text[:80]!r}"
+            errors.append(err)
+            print(f"⚠️ {err}")
 
         except Exception as e:
-            last_error = f"Erreur avec {model_name} : {e}"
-            print(f"❌ {last_error}")
+            err = f"{model_name}: {e}"
+            errors.append(err)
+            print(f"❌ {err}")
 
-    return None, last_error
+    return None, "\n".join(errors)
 
 
 # Génère une liste de tous les horaires :00 et :30 de la journée
