@@ -18,7 +18,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot FlaviBot est en ligne !"
+    return "Bot Chill est en ligne !"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -164,18 +164,21 @@ class TicketReasonModal(discord.ui.Modal, title="Ouvrir un Ticket"):
 
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO tickets (channel_id, user_id, reason) VALUES (?, ?, ?)",
-                       (str(ticket_channel.id), str(interaction.user.id), self.reason.value))
+        cursor.execute(
+            "INSERT INTO tickets (channel_id, user_id, reason) VALUES (?, ?, ?)",
+            (str(ticket_channel.id), str(interaction.user.id), self.reason.value)
+        )
         conn.commit()
         conn.close()
 
         embed = discord.Embed(
             title=f"🎫 Ticket de {interaction.user.display_name}",
-            description=f"**Raison :** {self.reason.value}\n\nUn membre du staff va prendre en charge ta demande.",
+            description=f"Raison : {self.reason.value}\n\nUn membre du staff va prendre en charge ta demande.",
             color=discord.Color.green()
         )
         await ticket_channel.send(content=f"{interaction.user.mention}", embed=embed, view=CloseTicketView())
         await interaction.followup.send(f"✅ Ton ticket a été créé : {ticket_channel.mention}", ephemeral=True)
+
 
 class TicketSystemView(discord.ui.View):
     def __init__(self):
@@ -185,6 +188,7 @@ class TicketSystemView(discord.ui.View):
     async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(TicketReasonModal())
 
+
 class CloseTicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -193,7 +197,7 @@ class CloseTicketView(discord.ui.View):
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("🔒 Fermeture du ticket dans 5 secondes...")
         await asyncio.sleep(5)
-        
+
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("UPDATE tickets SET status = 'CLOSED' WHERE channel_id = ?", (str(interaction.channel.id),))
@@ -211,19 +215,20 @@ def generer_devinette_gemini():
         print("❌ Clé GEMINI_API_KEY non trouvée dans les variables d'environnement.")
         return None, None
 
-    client = genai.Client(api_key=api_key)
-    prompt = (
-        "Génère une devinette originale, courte et amusante en français.\n"
-        "Format de réponse OBLIGATOIRE sur exactement 2 lignes :\n"
-        "Devinette: [Question]\n"
-        "Réponse: [Un seul mot précis en minuscules]"
-    )
-
     try:
+        client = genai.Client(api_key=api_key)
+        prompt = (
+            "Génère une devinette originale, courte et amusante en français.\n"
+            "Format de réponse OBLIGATOIRE sur exactement 2 lignes :\n"
+            "Devinette: [Question]\n"
+            "Réponse: [Un seul mot précis en minuscules]"
+        )
+
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
         )
+
         lines = response.text.strip().split('\n')
         question, reponse = "", ""
         for line in lines:
@@ -231,16 +236,24 @@ def generer_devinette_gemini():
                 question = line.replace("Devinette:", "").strip()
             elif line.startswith("Réponse:"):
                 reponse = line.replace("Réponse:", "").strip().lower()
+
+        if not question or not reponse:
+            print("❌ Format de réponse Gemini invalide.")
+            return None, None
+
         return question, reponse
+
     except Exception as e:
         print(f"❌ Erreur lors de la génération Gemini: {e}")
         return None, None
 
+
 # Génère une liste de tous les horaires :00 et :30 de la journée
 HALF_HOURS = [dt_time(hour=h, minute=m) for h in range(24) for m in (0, 30)]
 
-@tasks.loop(time=HALF_HOURS)
-async def devinette_loop():
+
+async def envoyer_devinette():
+    """Logique principale d'envoi d'une devinette (réutilisable par la boucle et force_devinette)."""
     dev_channel_id = int(get_config_val("DEVINETTE_CHANNEL_ID", "0"))
     if dev_channel_id == 0:
         print("⚠️ Aucun salon de devinette n'est configuré (/config_devinette_salon).")
@@ -252,30 +265,36 @@ async def devinette_loop():
         return
 
     # --- ANIMATION D'APPARITION DU MESSAGE ---
-    msg = await channel.send("⏳ **L'IA prépare une nouvelle devinette...**\n[▱▱▱▱▱▱▱▱▱▱]")
+    msg = await channel.send("⏳ L'IA prépare une nouvelle devinette...\n[▱▱▱▱▱▱▱▱▱▱]")
     await asyncio.sleep(1.2)
-    await msg.edit(content="🧩 **Génération de la question...**\n[██████▱▱▱▱]")
+    await msg.edit(content="🧩 Génération de la question...\n[██████▱▱▱▱]")
 
     question, reponse = await asyncio.to_thread(generer_devinette_gemini)
-    
+
     if not question or not reponse:
-        await msg.edit(content="❌ *Impossible de générer une devinette pour le moment.*")
+        await msg.edit(content="❌ Impossible de générer une devinette pour le moment.")
         return
 
     CURRENT_DEVINETTE["reponse"] = reponse
     CURRENT_DEVINETTE["active"] = True
 
     pts = get_config_val("DEVINETTE_POINTS", "20")
-    
-    await msg.edit(content="✨ **Devinette prête !**\n[██████████]")
+
+    await msg.edit(content="✨ Devinette prête !\n[██████████]")
     await asyncio.sleep(1)
 
     embed = discord.Embed(
         title="🧩 Devinette du moment !",
-        description=f"**{question}**\n\n*Écris ta réponse dans ce salon. Le premier à trouver gagne **{pts} points** !*",
+        description=f"{question}\n\nÉcris ta réponse dans ce salon. Le premier à trouver gagne {pts} points !",
         color=discord.Color.gold()
     )
     await channel.send(embed=embed)
+
+
+@tasks.loop(time=HALF_HOURS)
+async def devinette_loop():
+    await envoyer_devinette()
+
 
 # ==========================================
 # 6. ÉVÉNEMENTS DISCORD
@@ -285,11 +304,11 @@ async def on_ready():
     init_db()
     bot.add_view(TicketSystemView())
     bot.add_view(CloseTicketView())
-    
+
     if not devinette_loop.is_running():
         devinette_loop.start()
         print("⏰ Boucle de devinettes démarrée (Programmé à :00 et :30 de chaque heure).")
-        
+
     try:
         synced = await bot.tree.sync()
         print(f"✅ Synchronisé {len(synced)} commandes slash.")
@@ -297,6 +316,7 @@ async def on_ready():
         print(f"❌ Erreur synchro: {e}")
 
     print(f"🤖 Bot connecté sous le nom : {bot.user}")
+
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -312,13 +332,19 @@ async def on_member_join(member: discord.Member):
     desc = get_config_val("MSG_WELCOME_DESC", "Ravi de te voir parmi nous sur {guild} !")
 
     title = title.replace("{member}", member.display_name).replace("{guild}", member.guild.name)
-    desc = desc.replace("{member}", member.display_name).replace("{member_mention}", member.mention).replace("{guild}", member.guild.name)
+    desc = (
+        desc
+        .replace("{member}", member.display_name)
+        .replace("{member_mention}", member.mention)
+        .replace("{guild}", member.guild.name)
+    )
 
     embed = discord.Embed(title=title, description=desc, color=discord.Color.blue())
     if member.avatar:
         embed.set_thumbnail(url=member.avatar.url)
 
     await channel.send(content=member.mention, embed=embed)
+
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -337,14 +363,20 @@ async def on_message(message: discord.Message):
 
             conn = sqlite3.connect(DB_NAME)
             cursor = conn.cursor()
-            cursor.execute("INSERT OR IGNORE INTO users (user_id, username, points) VALUES (?, ?, 0)", (user_id, str(message.author)))
-            cursor.execute("UPDATE users SET points = points + ? WHERE user_id = ?", (pts_gagnes, user_id))
+            cursor.execute(
+                "INSERT OR IGNORE INTO users (user_id, username, points) VALUES (?, ?, 0)",
+                (user_id, str(message.author))
+            )
+            cursor.execute(
+                "UPDATE users SET points = points + ? WHERE user_id = ?",
+                (pts_gagnes, user_id)
+            )
             conn.commit()
             conn.close()
 
             await message.channel.send(
                 f"🎉 Bravo {message.author.mention} ! La réponse était bien **{reponse_attendue}** !\n"
-                f"💰 Tu remportes **+{pts_gagnes} points** !"
+                f"💰 Tu remportes +{pts_gagnes} points !"
             )
 
     await bot.process_commands(message)
@@ -357,21 +389,22 @@ async def on_message(message: discord.Message):
 @bot.tree.command(name="test_animation", description="Teste l'animation dynamique de message sur Discord")
 async def test_animation(interaction: discord.Interaction):
     await interaction.response.defer()
-    
+
     frames = [
-        "⏳ **Initialisation du système...**\n[▱▱▱▱▱▱▱▱▱▱] 0%",
-        "⚙️ **Chargement des données...**\n[██▱▱▱▱▱▱▱▱] 20%",
-        "🤖 **Connexion à l'IA Gemini...**\n[████▱▱▱▱▱▱] 40%",
-        "✨ **Mise en place des tickets...**\n[██████▱▱▱▱] 60%",
-        "🔥 **Dernières vérifications...**\n[████████▱▱] 80%",
-        "🎉 **Animation terminée avec succès !**\n[██████████] 100%"
+        "⏳ Initialisation du système...\n[▱▱▱▱▱▱▱▱▱▱] 0%",
+        "⚙️ Chargement des données...\n[██▱▱▱▱▱▱▱▱] 20%",
+        "🤖 Connexion à l'IA Gemini...\n[████▱▱▱▱▱▱] 40%",
+        "✨ Mise en place des tickets...\n[██████▱▱▱▱] 60%",
+        "🔥 Dernières vérifications...\n[████████▱▱] 80%",
+        "🎉 Animation terminée avec succès !\n[██████████] 100%"
     ]
 
     msg = await interaction.followup.send(frames[0])
-    
+
     for frame in frames[1:]:
         await asyncio.sleep(1.2)
         await msg.edit(content=frame)
+
 
 # --- FORCE DEVINETTE ---
 @bot.tree.command(name="force_devinette", description="Force l'envoi immédiat d'une devinette pour tester")
@@ -379,7 +412,8 @@ async def force_devinette(interaction: discord.Interaction):
     if not check_admin(interaction):
         return await interaction.response.send_message("❌ Admin requis.", ephemeral=True)
     await interaction.response.send_message("⏳ Lancement de la devinette...", ephemeral=True)
-    await devinette_loop()
+    await envoyer_devinette()
+
 
 # --- PROFIL & DAILY ---
 @bot.tree.command(name="profil", description="Affiche tes points et statistiques")
@@ -396,13 +430,14 @@ async def profil(interaction: discord.Interaction, membre: discord.Member = None
     lvl = row[2] if row else 1
 
     embed = discord.Embed(title=f"👤 Profil de {target.display_name}", color=discord.Color.purple())
-    embed.add_field(name="💰 Points", value=f"`{pts} pts`", inline=True)
-    embed.add_field(name="⭐ Level", value=f"`Level {lvl}`", inline=True)
-    embed.add_field(name="✨ XP", value=f"`{xp} XP`", inline=True)
+    embed.add_field(name="💰 Points", value=f"{pts} pts", inline=True)
+    embed.add_field(name="⭐ Level", value=f"Level {lvl}", inline=True)
+    embed.add_field(name="✨ XP", value=f"{xp} XP", inline=True)
     if target.avatar:
         embed.set_thumbnail(url=target.avatar.url)
 
     await interaction.response.send_message(embed=embed)
+
 
 @bot.tree.command(name="daily", description="Récupère tes points quotidiens gratuits")
 async def daily(interaction: discord.Interaction):
@@ -424,7 +459,10 @@ async def daily(interaction: discord.Interaction):
         restant = cooldown - (now - last_daily)
         heures = restant // 3600
         minutes = (restant % 3600) // 60
-        await interaction.followup.send(f"❌ Reviens dans {heures}h et {minutes}m pour tes prochains points.", ephemeral=True)
+        await interaction.followup.send(
+            f"❌ Reviens dans {heures}h et {minutes}m pour tes prochains points.",
+            ephemeral=True
+        )
         conn.close()
         return
 
@@ -436,14 +474,18 @@ async def daily(interaction: discord.Interaction):
     conn.commit()
     conn.close()
 
-    await interaction.followup.send(f"💵 Crédité ! +{pts_gagnes} points (Total: {nouveaux_points} pts).", ephemeral=True)
+    await interaction.followup.send(
+        f"💵 Crédité ! +{pts_gagnes} points (Total: {nouveaux_points} pts).",
+        ephemeral=True
+    )
+
 
 # --- CONFIGURATIONS ADMIN ---
 @bot.tree.command(name="setup_ticket", description="Envoie le panneau des tickets")
 async def setup_ticket(interaction: discord.Interaction, salon: discord.TextChannel):
     if not check_admin(interaction):
         return await interaction.response.send_message("❌ Admin requis.", ephemeral=True)
-    
+
     embed = discord.Embed(
         title="🎫 Support / Assistance",
         description="Clique sur le bouton ci-dessous pour ouvrir un ticket.",
@@ -452,12 +494,14 @@ async def setup_ticket(interaction: discord.Interaction, salon: discord.TextChan
     await salon.send(embed=embed, view=TicketSystemView())
     await interaction.response.send_message(f"✅ Panneau envoyé dans {salon.mention}", ephemeral=True)
 
+
 @bot.tree.command(name="config_ticket_categorie", description="Définit la catégorie des tickets")
 async def config_ticket_category(interaction: discord.Interaction, categorie: discord.CategoryChannel):
     if not check_admin(interaction):
         return await interaction.response.send_message("❌ Admin requis.", ephemeral=True)
     set_config_val("TICKET_CATEGORY_ID", categorie.id)
     await interaction.response.send_message(f"⚙️ Catégorie des tickets : {categorie.name}", ephemeral=True)
+
 
 @bot.tree.command(name="config_welcome_salon", description="Définit le salon d'accueil")
 async def config_welcome_salon(interaction: discord.Interaction, salon: discord.TextChannel):
@@ -466,12 +510,17 @@ async def config_welcome_salon(interaction: discord.Interaction, salon: discord.
     set_config_val("WELCOME_CHANNEL_ID", salon.id)
     await interaction.response.send_message(f"⚙️ Salon de bienvenue : {salon.mention}", ephemeral=True)
 
+
 @bot.tree.command(name="config_devinette_salon", description="Définit le salon des devinettes IA")
 async def config_devinette_salon(interaction: discord.Interaction, salon: discord.TextChannel):
     if not check_admin(interaction):
         return await interaction.response.send_message("❌ Admin requis.", ephemeral=True)
     set_config_val("DEVINETTE_CHANNEL_ID", salon.id)
-    await interaction.response.send_message(f"⚙️ Salon devinettes configuré sur {salon.mention} (Programmé à :00 et :30) !", ephemeral=True)
+    await interaction.response.send_message(
+        f"⚙️ Salon devinettes configuré sur {salon.mention} (Programmé à :00 et :30) !",
+        ephemeral=True
+    )
+
 
 @bot.tree.command(name="clear", description="Supprime des messages")
 async def clear(interaction: discord.Interaction, nombre: int = 10):
@@ -480,6 +529,7 @@ async def clear(interaction: discord.Interaction, nombre: int = 10):
     await interaction.response.defer(ephemeral=True)
     deleted = await interaction.channel.purge(limit=nombre)
     await interaction.followup.send(f"🗑️ {len(deleted)} message(s) supprimé(s).", ephemeral=True)
+
 
 # ==========================================
 # 8. DÉMARRAGE
