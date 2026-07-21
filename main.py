@@ -5,11 +5,11 @@ import time as time_module
 from datetime import time as dt_time
 from threading import Thread
 
+import requests
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from flask import Flask
-from google import genai
 
 # ==========================================
 # 1. KEEP ALIVE (Serveur Flask pour Render)
@@ -210,19 +210,20 @@ class CloseTicketView(discord.ui.View):
 # 5. DEVINETTES GEMINI IA & ANIMATION
 # ==========================================
 def generer_devinette_gemini():
-    """Retourne (question, reponse) ou (None, message_erreur) en cas d'échec."""
+    """Retourne (question, reponse) ou (None, message_erreur) en cas d'échec.
+    Utilise l'API REST Gemini directement (sans SDK) pour plus de fiabilité."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         msg = "GEMINI_API_KEY manquante dans les variables d'environnement."
         print(f"❌ {msg}")
         return None, msg
 
-    # Modèles stables à essayer dans l'ordre
+    # Modèles à essayer dans l'ordre (du plus stable au plus récent)
     MODELS = [
         "gemini-1.5-flash",
         "gemini-1.5-pro",
-        "gemini-2.0-flash-exp",
         "gemini-2.0-flash",
+        "gemini-2.0-flash-exp",
     ]
 
     prompt = (
@@ -232,21 +233,29 @@ def generer_devinette_gemini():
         "Réponse: [Un seul mot précis en minuscules]"
     )
 
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+
     errors = []
     for model_name in MODELS:
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{model_name}:generateContent?key={api_key}"
+        )
         try:
-            # Timeout de 20 secondes pour éviter de bloquer indéfiniment
-            from google.genai import types as genai_types
-            client = genai.Client(
-                api_key=api_key,
-                http_options={"timeout": 20},
-            )
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-            )
+            resp = requests.post(url, json=payload, timeout=25)
 
-            lines = response.text.strip().split('\n')
+            if resp.status_code != 200:
+                err = f"{model_name}: HTTP {resp.status_code} — {resp.text[:120]}"
+                errors.append(err)
+                print(f"❌ {err}")
+                continue
+
+            data = resp.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+            lines = text.split('\n')
             question, reponse = "", ""
             for line in lines:
                 if line.startswith("Devinette:"):
@@ -258,10 +267,14 @@ def generer_devinette_gemini():
                 print(f"✅ Devinette générée avec {model_name}")
                 return question, reponse
 
-            err = f"{model_name}: format invalide → {response.text[:80]!r}"
+            err = f"{model_name}: format invalide → {text[:80]!r}"
             errors.append(err)
             print(f"⚠️ {err}")
 
+        except requests.Timeout:
+            err = f"{model_name}: timeout (25s dépassé)"
+            errors.append(err)
+            print(f"❌ {err}")
         except Exception as e:
             err = f"{model_name}: {e}"
             errors.append(err)
