@@ -546,6 +546,75 @@ async def daily(interaction: discord.Interaction):
     )
 
 
+# --- GESTION DES RÔLES AUTORISÉS TICKETS ---
+@bot.tree.command(name="ticket_role_add", description="Autorise un rôle à gérer les tickets")
+async def ticket_role_add(interaction: discord.Interaction, role: discord.Role):
+    if not interaction.user.guild_permissions.administrator and interaction.user.id != interaction.guild.owner_id:
+        return await interaction.response.send_message("❌ Administrateur requis.", ephemeral=True)
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO authorized_roles (role_id) VALUES (?)", (str(role.id),))
+    conn.commit()
+    conn.close()
+
+    await interaction.response.send_message(
+        f"✅ Le rôle {role.mention} peut maintenant gérer les tickets.", ephemeral=True
+    )
+
+
+@bot.tree.command(name="ticket_role_remove", description="Retire l'accès tickets à un rôle")
+async def ticket_role_remove(interaction: discord.Interaction, role: discord.Role):
+    if not interaction.user.guild_permissions.administrator and interaction.user.id != interaction.guild.owner_id:
+        return await interaction.response.send_message("❌ Administrateur requis.", ephemeral=True)
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM authorized_roles WHERE role_id = ?", (str(role.id),))
+    supprime = cursor.rowcount
+    conn.commit()
+    conn.close()
+
+    if supprime:
+        await interaction.response.send_message(
+            f"🗑️ Le rôle {role.mention} n'a plus accès aux tickets.", ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            f"⚠️ Le rôle {role.mention} n'était pas dans la liste.", ephemeral=True
+        )
+
+
+@bot.tree.command(name="ticket_roles_list", description="Affiche les rôles autorisés à gérer les tickets")
+async def ticket_roles_list(interaction: discord.Interaction):
+    if not check_admin(interaction):
+        return await interaction.response.send_message("❌ Admin requis.", ephemeral=True)
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT role_id FROM authorized_roles")
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        return await interaction.response.send_message(
+            "ℹ️ Aucun rôle autorisé — seuls les administrateurs peuvent gérer les tickets.",
+            ephemeral=True
+        )
+
+    mentions = []
+    for (role_id,) in rows:
+        role = interaction.guild.get_role(int(role_id))
+        mentions.append(role.mention if role else f"*(rôle supprimé : {role_id})*")
+
+    embed = discord.Embed(
+        title="🎫 Rôles autorisés — Tickets",
+        description="\n".join(f"• {m}" for m in mentions),
+        color=discord.Color.blurple()
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 # --- CONFIGURATIONS ADMIN ---
 @bot.tree.command(name="setup_ticket", description="Envoie le panneau des tickets")
 async def setup_ticket(interaction: discord.Interaction, salon: discord.TextChannel):
