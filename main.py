@@ -235,7 +235,12 @@ def generer_devinette_gemini():
     errors = []
     for model_name in MODELS:
         try:
-            client = genai.Client(api_key=api_key)
+            # Timeout de 20 secondes pour éviter de bloquer indéfiniment
+            from google.genai import types as genai_types
+            client = genai.Client(
+                api_key=api_key,
+                http_options={"timeout": 20},
+            )
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
@@ -286,7 +291,14 @@ async def envoyer_devinette():
     await asyncio.sleep(1.2)
     await msg.edit(content="🧩 Génération de la question...\n[██████▱▱▱▱]")
 
-    question, reponse_ou_erreur = await asyncio.to_thread(generer_devinette_gemini)
+    try:
+        question, reponse_ou_erreur = await asyncio.wait_for(
+            asyncio.to_thread(generer_devinette_gemini),
+            timeout=60  # 60 secondes max, sinon on abandonne
+        )
+    except asyncio.TimeoutError:
+        await msg.edit(content="❌ Impossible de générer une devinette.\n> Timeout : l'IA n'a pas répondu dans les temps.")
+        return
 
     if not question:
         await msg.edit(content=f"❌ Impossible de générer une devinette.\n> {reponse_ou_erreur}")
