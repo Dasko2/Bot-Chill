@@ -5,7 +5,7 @@ import time as time_module
 from datetime import time as dt_time
 from threading import Thread
 
-import requests
+import random
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -207,87 +207,108 @@ class CloseTicketView(discord.ui.View):
         await interaction.channel.delete(reason="Ticket fermé")
 
 # ==========================================
-# 5. DEVINETTES GEMINI IA & ANIMATION
+# 5. CALCUL ALÉATOIRE & ANIMATION
 # ==========================================
-def generer_devinette_gemini():
-    """Retourne (question, reponse) ou (None, message_erreur) en cas d'échec.
-    Utilise l'API REST Gemini directement (sans SDK) pour plus de fiabilité."""
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        msg = "GEMINI_API_KEY manquante dans les variables d'environnement."
-        print(f"❌ {msg}")
-        return None, msg
 
-    # (model, api_version) — on essaie v1 ET v1beta selon le modèle
-    MODELS = [
-        ("gemini-2.0-flash",       "v1beta"),
-        ("gemini-1.5-flash",       "v1"),
-        ("gemini-1.5-flash",       "v1beta"),
-        ("gemini-1.5-pro",         "v1"),
-        ("gemini-2.0-flash-lite",  "v1beta"),
-    ]
+# ---- Générateur d'expression récursif ----
 
-    prompt = (
-        "Génère une devinette originale, courte et amusante en français.\n"
-        "Format de réponse OBLIGATOIRE sur exactement 2 lignes :\n"
-        "Devinette: [Question]\n"
-        "Réponse: [Un seul mot précis en minuscules]"
-    )
+def _noeud(profondeur: int, max_profondeur: int):
+    """
+    Construit récursivement un arbre d'expression.
+    Retourne (texte_affichage, valeur_entière).
 
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}]
-    }
+    Règles :
+    - En feuille (profondeur == max_profondeur) → nombre entier aléatoire.
+    - En nœud intermédiaire → opérateur aléatoire + deux sous-arbres.
+    - La division est toujours entière et non nulle (on ajuste le dividende).
+    - On évite les résultats absurdement grands (multiplication limitée).
+    """
+    # Probabilité de faire une feuille augmente avec la profondeur
+    proba_feuille = 0.25 + 0.35 * (profondeur / max_profondeur)
+    if profondeur >= max_profondeur or random.random() < proba_feuille:
+        # Feuille : un nombre selon la profondeur (petits chiffres en surface)
+        plafond = max(2, 30 - profondeur * 5)
+        val = random.randint(1, plafond)
+        return str(val), val
 
-    errors = []
-    for model_name, api_version in MODELS:
-        url = (
-            f"https://generativelanguage.googleapis.com/{api_version}/models/"
-            f"{model_name}:generateContent?key={api_key}"
-        )
-        try:
-            resp = requests.post(url, json=payload, timeout=25)
+    op = random.choices(
+        ["+", "-", "×", "÷"],
+        weights=[30, 25, 30, 15]
+    )[0]
 
-            # Quota dépassé : on attend 10s et on réessaie une fois
-            if resp.status_code == 429:
-                print(f"⚠️ {model_name} ({api_version}): quota dépassé, attente 10s…")
-                time_module.sleep(10)
-                resp = requests.post(url, json=payload, timeout=25)
+    gauche_txt, gauche_val = _noeud(profondeur + 1, max_profondeur)
+    droite_txt, droite_val = _noeud(profondeur + 1, max_profondeur)
 
-            if resp.status_code != 200:
-                err = f"{model_name} ({api_version}): HTTP {resp.status_code} — {resp.text[:100]}"
-                errors.append(err)
-                print(f"❌ {err}")
-                continue
+    if op == "+":
+        val = gauche_val + droite_val
+        # Parenthèses si le sous-arbre est lui-même une expression
+        g = f"({gauche_txt})" if " " in gauche_txt else gauche_txt
+        d = f"({droite_txt})" if " " in droite_txt else droite_txt
+        texte = f"{g} + {d}"
 
-            data = resp.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    elif op == "-":
+        # On s'assure que le résultat reste positif
+        if droite_val > gauche_val:
+            gauche_val, droite_val = droite_val, gauche_val
+            gauche_txt, droite_txt = droite_txt, gauche_txt
+        val = gauche_val - droite_val
+        g = f"({gauche_txt})" if " " in gauche_txt else gauche_txt
+        d = f"({droite_txt})" if " " in droite_txt else droite_txt
+        texte = f"{g} - {d}"
 
-            lines = text.split('\n')
-            question, reponse = "", ""
-            for line in lines:
-                if line.startswith("Devinette:"):
-                    question = line.replace("Devinette:", "").strip()
-                elif line.startswith("Réponse:"):
-                    reponse = line.replace("Réponse:", "").strip().lower()
+    elif op == "×":
+        # Limite la taille du résultat pour éviter des milliers
+        if abs(gauche_val) > 20 or abs(droite_val) > 20:
+            # Repasse en addition si les valeurs sont trop grandes
+            val = gauche_val + droite_val
+            g = f"({gauche_txt})" if " " in gauche_txt else gauche_txt
+            d = f"({droite_txt})" if " " in droite_txt else droite_txt
+            texte = f"{g} + {d}"
+        else:
+            val = gauche_val * droite_val
+            g = f"({gauche_txt})" if " " in gauche_txt else gauche_txt
+            d = f"({droite_txt})" if " " in droite_txt else droite_txt
+            texte = f"{g} × {d}"
 
-            if question and reponse:
-                print(f"✅ Devinette générée avec {model_name} ({api_version})")
-                return question, reponse
+    else:  # ÷
+        # On force une division entière : on ajuste le dividende
+        if droite_val == 0:
+            droite_val = random.randint(1, 10)
+            droite_txt = str(droite_val)
+        quotient = random.randint(1, 10)
+        gauche_val = droite_val * quotient
+        gauche_txt = str(gauche_val)
+        val = quotient
+        g = gauche_txt
+        d = f"({droite_txt})" if " " in droite_txt else droite_txt
+        texte = f"{g} ÷ {d}"
 
-            err = f"{model_name} ({api_version}): format invalide → {text[:80]!r}"
-            errors.append(err)
-            print(f"⚠️ {err}")
+    return texte, val
 
-        except requests.Timeout:
-            err = f"{model_name} ({api_version}): timeout (25s)"
-            errors.append(err)
-            print(f"❌ {err}")
-        except Exception as e:
-            err = f"{model_name} ({api_version}): {e}"
-            errors.append(err)
-            print(f"❌ {err}")
 
-    return None, "\n".join(errors)
+def generer_calcul():
+    """
+    Génère un calcul aléatoire de complexité variable.
+    Retourne (question_str, reponse_str).
+    """
+    # Profondeur maximale de l'arbre = complexité du calcul
+    max_profondeur = random.choices(
+        [1, 2, 3, 4],
+        weights=[25, 40, 25, 10]
+    )[0]
+
+    # Génère jusqu'à 10 tentatives pour avoir un résultat raisonnable
+    for _ in range(10):
+        texte, valeur = _noeud(0, max_profondeur)
+        if 0 <= valeur <= 9999:
+            break
+    else:
+        # Fallback simple si toutes les tentatives donnent des valeurs hors plage
+        a, b = random.randint(1, 50), random.randint(1, 50)
+        texte, valeur = f"{a} + {b}", a + b
+
+    question = f"Combien font **{texte}** ?"
+    return question, str(valeur)
 
 
 # Génère une liste de tous les horaires :00 et :30 de la journée
@@ -295,51 +316,41 @@ HALF_HOURS = [dt_time(hour=h, minute=m) for h in range(24) for m in (0, 30)]
 
 
 async def envoyer_devinette():
-    """Logique principale d'envoi d'une devinette (réutilisable par la boucle et force_devinette)."""
+    """Génère et envoie un calcul aléatoire dans le salon configuré."""
     dev_channel_id = int(get_config_val("DEVINETTE_CHANNEL_ID", "0"))
     if dev_channel_id == 0:
-        print("⚠️ Aucun salon de devinette n'est configuré (/config_devinette_salon).")
+        print("⚠️ Aucun salon de calcul n'est configuré (/config_devinette_salon).")
         return
 
     channel = bot.get_channel(dev_channel_id)
     if not channel:
-        print(f"⚠️ Salon de devinette introuvable (ID: {dev_channel_id}).")
+        print(f"⚠️ Salon introuvable (ID: {dev_channel_id}).")
         return
 
-    # --- ANIMATION D'APPARITION DU MESSAGE ---
-    msg = await channel.send("⏳ L'IA prépare une nouvelle devinette...\n[▱▱▱▱▱▱▱▱▱▱]")
-    await asyncio.sleep(1.2)
-    await msg.edit(content="🧩 Génération de la question...\n[██████▱▱▱▱]")
+    # --- ANIMATION ---
+    msg = await channel.send("🧮 Préparation du calcul...\n[▱▱▱▱▱▱▱▱▱▱]")
+    await asyncio.sleep(0.8)
+    await msg.edit(content="⚙️ Génération en cours...\n[█████▱▱▱▱▱]")
+    await asyncio.sleep(0.8)
+    await msg.edit(content="✅ Calcul prêt !\n[██████████]")
+    await asyncio.sleep(0.6)
+    await msg.delete()
 
-    try:
-        question, reponse_ou_erreur = await asyncio.wait_for(
-            asyncio.to_thread(generer_devinette_gemini),
-            timeout=60  # 60 secondes max, sinon on abandonne
-        )
-    except asyncio.TimeoutError:
-        await msg.edit(content="❌ Impossible de générer une devinette.\n> Timeout : l'IA n'a pas répondu dans les temps.")
-        return
-
-    if not question:
-        await msg.edit(content=f"❌ Impossible de générer une devinette.\n> {reponse_ou_erreur}")
-        return
-
-    reponse = reponse_ou_erreur
+    question, reponse = generer_calcul()
 
     CURRENT_DEVINETTE["reponse"] = reponse
     CURRENT_DEVINETTE["active"] = True
 
     pts = get_config_val("DEVINETTE_POINTS", "20")
 
-    await msg.edit(content="✨ Devinette prête !\n[██████████]")
-    await asyncio.sleep(1)
-
     embed = discord.Embed(
-        title="🧩 Devinette du moment !",
-        description=f"{question}\n\nÉcris ta réponse dans ce salon. Le premier à trouver gagne {pts} points !",
-        color=discord.Color.gold()
+        title="🧮 Calcul du moment !",
+        description=f"{question}\n\nTape ta réponse dans ce salon. Le premier à trouver gagne **{pts} points** !",
+        color=discord.Color.blue()
     )
+    embed.set_footer(text="Répondre avec juste le nombre • Pas de triche 👀")
     await channel.send(embed=embed)
+    print(f"✅ Calcul envoyé — réponse : {reponse}")
 
 
 @tasks.loop(time=HALF_HOURS)
@@ -404,10 +415,11 @@ async def on_message(message: discord.Message):
 
     dev_channel_id = int(get_config_val("DEVINETTE_CHANNEL_ID", "0"))
     if CURRENT_DEVINETTE["active"] and message.channel.id == dev_channel_id:
-        reponse_user = message.content.strip().lower()
+        reponse_user = message.content.strip()
         reponse_attendue = CURRENT_DEVINETTE["reponse"]
 
-        if reponse_attendue and reponse_attendue in reponse_user:
+        # Comparaison numérique stricte (ex: "42" == "42", "-5" == "-5")
+        if reponse_attendue and reponse_user == reponse_attendue:
             CURRENT_DEVINETTE["active"] = False
             pts_gagnes = int(get_config_val("DEVINETTE_POINTS", "20"))
             user_id = str(message.author.id)
@@ -444,7 +456,7 @@ async def test_animation(interaction: discord.Interaction):
     frames = [
         "⏳ Initialisation du système...\n[▱▱▱▱▱▱▱▱▱▱] 0%",
         "⚙️ Chargement des données...\n[██▱▱▱▱▱▱▱▱] 20%",
-        "🤖 Connexion à l'IA Gemini...\n[████▱▱▱▱▱▱] 40%",
+        "🧮 Génération du calcul...\n[████▱▱▱▱▱▱] 40%",
         "✨ Mise en place des tickets...\n[██████▱▱▱▱] 60%",
         "🔥 Dernières vérifications...\n[████████▱▱] 80%",
         "🎉 Animation terminée avec succès !\n[██████████] 100%"
@@ -457,12 +469,12 @@ async def test_animation(interaction: discord.Interaction):
         await msg.edit(content=frame)
 
 
-# --- FORCE DEVINETTE ---
-@bot.tree.command(name="force_devinette", description="Force l'envoi immédiat d'une devinette pour tester")
+# --- FORCE CALCUL ---
+@bot.tree.command(name="force_devinette", description="Force l'envoi immédiat d'un calcul pour tester")
 async def force_devinette(interaction: discord.Interaction):
     if not check_admin(interaction):
         return await interaction.response.send_message("❌ Admin requis.", ephemeral=True)
-    await interaction.response.send_message("⏳ Lancement de la devinette...", ephemeral=True)
+    await interaction.response.send_message("⏳ Lancement du calcul...", ephemeral=True)
     await envoyer_devinette()
 
 
@@ -562,13 +574,13 @@ async def config_welcome_salon(interaction: discord.Interaction, salon: discord.
     await interaction.response.send_message(f"⚙️ Salon de bienvenue : {salon.mention}", ephemeral=True)
 
 
-@bot.tree.command(name="config_devinette_salon", description="Définit le salon des devinettes IA")
+@bot.tree.command(name="config_devinette_salon", description="Définit le salon des calculs aléatoires")
 async def config_devinette_salon(interaction: discord.Interaction, salon: discord.TextChannel):
     if not check_admin(interaction):
         return await interaction.response.send_message("❌ Admin requis.", ephemeral=True)
     set_config_val("DEVINETTE_CHANNEL_ID", salon.id)
     await interaction.response.send_message(
-        f"⚙️ Salon devinettes configuré sur {salon.mention} (Programmé à :00 et :30) !",
+        f"⚙️ Salon de calculs configuré sur {salon.mention} (Programmé à :00 et :30) !",
         ephemeral=True
     )
 
