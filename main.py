@@ -224,16 +224,16 @@ def _noeud(profondeur: int, max_profondeur: int):
     - On évite les résultats absurdement grands (multiplication limitée).
     """
     # Probabilité de faire une feuille augmente avec la profondeur
-    proba_feuille = 0.25 + 0.35 * (profondeur / max_profondeur)
+    proba_feuille = 0.35 + 0.40 * (profondeur / max_profondeur)
     if profondeur >= max_profondeur or random.random() < proba_feuille:
-        # Feuille : un nombre selon la profondeur (petits chiffres en surface)
-        plafond = max(2, 30 - profondeur * 5)
+        # Feuille : petits nombres pour garder le calcul lisible
+        plafond = max(2, 20 - profondeur * 4)
         val = random.randint(1, plafond)
         return str(val), val
 
     op = random.choices(
         ["+", "-", "×", "÷"],
-        weights=[30, 25, 30, 15]
+        weights=[35, 30, 25, 10]
     )[0]
 
     gauche_txt, gauche_val = _noeud(profondeur + 1, max_profondeur)
@@ -292,9 +292,12 @@ def generer_calcul():
     Retourne (question_str, reponse_str).
     """
     # Profondeur maximale de l'arbre = complexité du calcul
+    # 1 = une seule opération (ex: 8 × 3)
+    # 2 = deux opérations (ex: (4 + 6) × 3)
+    # 3 = trois opérations max, rare
     max_profondeur = random.choices(
-        [1, 2, 3, 4],
-        weights=[25, 40, 25, 10]
+        [1, 2, 3],
+        weights=[45, 45, 10]
     )[0]
 
     # Génère jusqu'à 10 tentatives pour avoir un résultat raisonnable
