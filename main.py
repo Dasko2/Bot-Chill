@@ -218,12 +218,13 @@ def generer_devinette_gemini():
         print(f"❌ {msg}")
         return None, msg
 
-    # Modèles à essayer dans l'ordre (du plus stable au plus récent)
+    # (model, api_version) — on essaie v1 ET v1beta selon le modèle
     MODELS = [
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-exp",
+        ("gemini-2.0-flash",       "v1beta"),
+        ("gemini-1.5-flash",       "v1"),
+        ("gemini-1.5-flash",       "v1beta"),
+        ("gemini-1.5-pro",         "v1"),
+        ("gemini-2.0-flash-lite",  "v1beta"),
     ]
 
     prompt = (
@@ -238,16 +239,22 @@ def generer_devinette_gemini():
     }
 
     errors = []
-    for model_name in MODELS:
+    for model_name, api_version in MODELS:
         url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"https://generativelanguage.googleapis.com/{api_version}/models/"
             f"{model_name}:generateContent?key={api_key}"
         )
         try:
             resp = requests.post(url, json=payload, timeout=25)
 
+            # Quota dépassé : on attend 10s et on réessaie une fois
+            if resp.status_code == 429:
+                print(f"⚠️ {model_name} ({api_version}): quota dépassé, attente 10s…")
+                time_module.sleep(10)
+                resp = requests.post(url, json=payload, timeout=25)
+
             if resp.status_code != 200:
-                err = f"{model_name}: HTTP {resp.status_code} — {resp.text[:120]}"
+                err = f"{model_name} ({api_version}): HTTP {resp.status_code} — {resp.text[:100]}"
                 errors.append(err)
                 print(f"❌ {err}")
                 continue
@@ -264,19 +271,19 @@ def generer_devinette_gemini():
                     reponse = line.replace("Réponse:", "").strip().lower()
 
             if question and reponse:
-                print(f"✅ Devinette générée avec {model_name}")
+                print(f"✅ Devinette générée avec {model_name} ({api_version})")
                 return question, reponse
 
-            err = f"{model_name}: format invalide → {text[:80]!r}"
+            err = f"{model_name} ({api_version}): format invalide → {text[:80]!r}"
             errors.append(err)
             print(f"⚠️ {err}")
 
         except requests.Timeout:
-            err = f"{model_name}: timeout (25s dépassé)"
+            err = f"{model_name} ({api_version}): timeout (25s)"
             errors.append(err)
             print(f"❌ {err}")
         except Exception as e:
-            err = f"{model_name}: {e}"
+            err = f"{model_name} ({api_version}): {e}"
             errors.append(err)
             print(f"❌ {err}")
 
